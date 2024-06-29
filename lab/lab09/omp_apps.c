@@ -34,12 +34,35 @@ void v_add_naive(double* x, double* y, double* z) {
 void v_add_optimized_adjacent(double* x, double* y, double* z) {
     // TODO: Implement this function
     // Do NOT use the `for` directive here!
+    #pragma omp parallel
+    {
+        int id = omp_get_thread_num();
+        int threads = omp_get_num_threads();
+        for (int i = id; i < ARRAY_SIZE; i += threads) {
+            z[i] = x[i] + y[i];
+        }
+    }
 }
 
 // Chunks Method
 void v_add_optimized_chunks(double* x, double* y, double* z) {
     // TODO: Implement this function
     // Do NOT use the `for` directive here!
+    #pragma omp parallel
+    {
+        int id = omp_get_thread_num();
+        int threads = omp_get_num_threads();
+        int width = (int) ARRAY_SIZE / threads;
+        for (int i = 0; i < width; i ++) {
+            z[i + width * id] = x[i + width * id] + y[i + width * id];
+        }
+
+        if (id == threads - 1) {
+            for (int i = width * threads; i < ARRAY_SIZE; i ++) {
+                z[i] = x[i] + y[i];
+            }
+        }
+    }
 }
 
 /* -------------------------------Dot Product------------------------------*/
@@ -60,6 +83,12 @@ double dotp_manual_optimized(double* x, double* y, int arr_size) {
     double global_sum = 0.0;
     // TODO: Implement this function
     // Do NOT use the `reduction` directive here!
+
+    #pragma omp parallel for 
+    for (int i = 0; i < arr_size; i ++) {
+        #pragma omp critical
+        global_sum += x[i] * y[i];
+    }
     return global_sum;
 }
 
@@ -68,6 +97,10 @@ double dotp_reduction_optimized(double* x, double* y, int arr_size) {
     double global_sum = 0.0;
     // TODO: Implement this function
     // Please DO use the `reduction` directive here!
+    #pragma omp parallel for reduction(+ : global_sum)
+    for (int i = 0; i < arr_size; i ++) {
+        global_sum += x[i] + y[i];
+    }
     return global_sum;
 }
 
