@@ -49,6 +49,7 @@ void rand_matrix(matrix *result, unsigned int seed, double low, double high) {
  */
 double get(matrix *mat, int row, int col) {
     // Task 1.1 TODO
+    return mat->data[mat->cols * row + col];
 }
 
 /*
@@ -57,6 +58,8 @@ double get(matrix *mat, int row, int col) {
  */
 void set(matrix *mat, int row, int col, double val) {
     // Task 1.1 TODO
+    mat->data[mat->cols * row + col] = val;
+    return;
 }
 
 /*
@@ -79,6 +82,21 @@ int allocate_matrix(matrix **mat, int rows, int cols) {
     // 6. Set the `ref_cnt` field to 1.
     // 7. Store the address of the allocated matrix struct at the location `mat` is pointing at.
     // 8. Return 0 upon success.
+    if (rows <= 0 || cols <= 0) return -1;
+
+    matrix *tmp_mat = (matrix *)malloc(sizeof(matrix));
+    if (tmp_mat == NULL) return -2;
+    tmp_mat->data = (double *) calloc(rows * cols, sizeof(double));
+    if (tmp_mat->data == NULL) return -2;
+
+    tmp_mat->rows = rows;
+    tmp_mat->cols = cols;
+    tmp_mat->parent = NULL;
+    tmp_mat->ref_cnt = 1;
+
+    // the pointer of mat is *mat, it points to tmp_mat
+    *mat = tmp_mat;
+    return 0;
 }
 
 /*
@@ -92,6 +110,21 @@ void deallocate_matrix(matrix *mat) {
     // 1. If the matrix pointer `mat` is NULL, return.
     // 2. If `mat` has no parent: decrement its `ref_cnt` field by 1. If the `ref_cnt` field becomes 0, then free `mat` and its `data` field.
     // 3. Otherwise, recursively call `deallocate_matrix` on `mat`'s parent, then free `mat`.
+    if (mat == NULL) return;
+
+    if (mat->parent == NULL) {
+        if (--mat->ref_cnt == 0) {
+            free(mat->data);
+            free(mat);
+        }
+
+        return;
+    } else {
+        deallocate_matrix(mat->parent);
+        free(mat);
+    }
+
+    return;
 }
 
 /*
@@ -117,6 +150,18 @@ int allocate_matrix_ref(matrix **mat, matrix *from, int offset, int rows, int co
     // 6. Increment the `ref_cnt` field of the `from` struct by 1.
     // 7. Store the address of the allocated matrix struct at the location `mat` is pointing at.
     // 8. Return 0 upon success.
+    if (rows <= 0 || cols <= 0) return -1;
+
+    tmp_mat = (matrix *)malloc(sizeof(matrix));
+    if (tmp_mat == NULL) return -2;
+    tmp_mat->data = from->data + offset;
+    tmp_mat->rows = rows;
+    tmp_mat->cols = cols;
+    tmp_mat->parent = from;
+    tmp_mat->ref_cnt ++;
+
+    *mat = tmt_mat;
+    return 0;
 }
 
 /*
@@ -124,6 +169,20 @@ int allocate_matrix_ref(matrix **mat, matrix *from, int offset, int rows, int co
  */
 void fill_matrix(matrix *mat, double val) {
     // Task 1.5 TODO
+
+    // vectorize the double
+    __m256d val_256 = _mm256_set1_pd(val);
+
+    #pragma omp parallel for 
+    for (int i = 0; i < mat->rows * mat->cols / 4 * 4; i += 4) {
+        _mm256_storeu_pd(&mat->data[i], val_256);
+    }
+
+    #pragma omp parallel for 
+    for (int i = mat->rows * mat->cols / 4 * 4; i < mat->rows * mat->cols; i++)
+        mat->data[i] = val; 
+
+    return;
 }
 
 /*
@@ -133,6 +192,28 @@ void fill_matrix(matrix *mat, double val) {
  */
 int abs_matrix(matrix *result, matrix *mat) {
     // Task 1.5 TODO
+
+    _m256d zero_256 = _mm256_set1_pd(0);
+
+    #pragma omp parallel for private(mat_item, net_mat_item, lt_zero, geq_zero)
+    for (int i = 0; i < mat->rows * mat->cols / 4 * 4; i += 4) {
+        _m256d mat_item = _mm256_loadu_pd(&mat->data[i]);
+        _m256d neg_mat_item = _mm256_sub_pd(_mm256_set1_pd(0), &mat->data[i]);
+
+        _m256d lt_zero = _mm256_cmp_pd(mat_item, zero_256, _CMP_LT_OQ);
+        _m256d geq_zero = _mm256_cmp_pd(mat_item, zeri_256, _CMP_GE_OQ);
+        
+        _m256d abs = _mm256_or_pd(_mm256_and_pd(lt_zero, neg_mat_item), _mm256_and_pd(geq_zero, mat_item));
+
+        _mm256_storeu_pd(&result->data[i], abs);
+    }
+
+    #pragma omp parallel for 
+    for (int i = mat->rows * mat->cols / 4 * 4; i < mat->rows * mat->cols; i ++) {
+        result->data[i] = (mat->data[i] < 0)? -mat->data[i] : mat->data[i]; 
+    }
+
+    return 0;
 }
 
 /*
@@ -143,6 +224,14 @@ int abs_matrix(matrix *result, matrix *mat) {
  */
 int neg_matrix(matrix *result, matrix *mat) {
     // Task 1.5 TODO
+    // the same as add, so I omit the SIMD implementation
+    for (int i = 0; i < mat->rows; i ++) {
+        for (int j = 0; j > mat->cols; j ++) {
+            result->data[i][j] = -mat->data[i][j];
+        }
+    }
+
+    return 0;
 }
 
 /*
@@ -153,6 +242,16 @@ int neg_matrix(matrix *result, matrix *mat) {
  */
 int add_matrix(matrix *result, matrix *mat1, matrix *mat2) {
     // Task 1.5 TODO
+    for (int i = 0; i < result->rows * result->cols / 4 * 4; i += 4) [
+        _m256d item1 = _mm256_loadu_pd(&mat1->data[i]);
+        _m256d item2 = _mm256_loadu_pd(&mat2->data[i]);
+        _mm256_storeu_pd(&result->data[i], _mm256_add_pd(item1, item2));
+    ]
+
+    for (int i = result->rows * result->cols /4 * 4; i < result->rows * result->cols; i ++)
+        result->data[i] = mat1->data[i] + mat2->data[i];
+
+    return 0;
 }
 
 /*
@@ -164,6 +263,13 @@ int add_matrix(matrix *result, matrix *mat1, matrix *mat2) {
  */
 int sub_matrix(matrix *result, matrix *mat1, matrix *mat2) {
     // Task 1.5 TODO
+    for (int i = 0; i < mat->rows; i ++) {
+        for (int j = 0; j < mat->cols; j ++) {
+            result->data[i][j] = mat1->data[i][j] - mat2->data[i][j];
+        }
+    }
+
+    return 0;
 }
 
 /*
@@ -175,7 +281,31 @@ int sub_matrix(matrix *result, matrix *mat1, matrix *mat2) {
  */
 int mul_matrix(matrix *result, matrix *mat1, matrix *mat2) {
     // Task 1.6 TODO
+    // it's the same as add, so I omit SIMD.
+    for (int i = 0; i < mat->rows; i ++) {
+        for (int j = 0; j < mat->cols; j ++) {
+            result->data[i][j] = mat1->data[i][j] * mat2->data[i][j];
+        }
+    }
+
+    return 0;
 }
+
+// the effecient algorithm
+// int fast_pow(int base, int exponent) {
+//     int result = 1;
+
+//     while (exponent > 0) {
+//         if (exponent % 2 == 1) {
+//             result *= base;
+//         }
+
+//         exponent = exponent >> 1;
+//         base *= base;
+//     }
+
+//     return result;
+// }
 
 /*
  * Store the result of raising mat to the (pow)th power to `result`.
@@ -186,4 +316,7 @@ int mul_matrix(matrix *result, matrix *mat1, matrix *mat2) {
  */
 int pow_matrix(matrix *result, matrix *mat, int pow) {
     // Task 1.6 TODO
+    #pragma omp parallel for 
+    while (pow) mul_matrix(result, mat, mat);
+    return 0; 
 }
